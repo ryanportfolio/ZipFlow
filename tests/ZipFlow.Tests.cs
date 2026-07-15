@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Text;
+using Microsoft.Win32;
 using ZipFlow;
 
 namespace ZipFlow
@@ -89,6 +90,62 @@ namespace ZipFlow
             }
         }
 
+        private sealed class RecordingSetupFlow : IZipFlowSetupFlow
+        {
+            internal int Calls;
+
+            public void Run()
+            {
+                Calls++;
+            }
+        }
+
+        private sealed class RecordingSetupBackend : IZipFlowSetupBackend
+        {
+            internal readonly List<string> Calls = new List<string>();
+            internal Exception CopyFailure;
+
+            public void EnsureDirectory(string path)
+            {
+                Calls.Add("Directory|" + path);
+            }
+
+            public void CopyFile(string source, string destination)
+            {
+                Calls.Add("Copy|" + source + "|" + destination);
+                if (CopyFailure != null)
+                {
+                    throw CopyFailure;
+                }
+            }
+
+            public void SetCurrentUserValue(string subKeyPath, string name, object value, RegistryValueKind kind)
+            {
+                Calls.Add("Registry|" + subKeyPath + "|" + name + "|" + ValueText(value) + "|" + kind);
+            }
+
+            public void NotifyAssociationsChanged()
+            {
+                Calls.Add("Notify");
+            }
+
+            public void OpenDefaultApps()
+            {
+                Calls.Add("OpenDefaultApps");
+            }
+
+            private static string ValueText(object value)
+            {
+                byte[] bytes = value as byte[];
+                if (bytes != null)
+                {
+                    return "byte[" + bytes.Length + "]";
+                }
+
+                return Convert.ToString(value);
+            }
+        }
+
         private static readonly List<string> TempRoots = new List<string>();
 
         public static int Main()
@@ -120,6 +177,12 @@ namespace ZipFlow
                 new TestCase("delete_failure_keeps_source_and_suppresses_open", DeleteFailureKeepsSourceAndSuppressesOpen),
                 new TestCase("open_failure_keeps_published_output_after_source_removal", OpenFailureKeepsPublishedOutputAfterSourceRemoval),
                 new TestCase("empty_archive_publishes_an_empty_folder", EmptyArchivePublishesAnEmptyFolder),
+                new TestCase("zero_argument_launch_runs_setup_without_archive_side_effects", ZeroArgumentLaunchRunsSetupWithoutArchiveSideEffects),
+                new TestCase("self_setup_copies_and_registers_the_installed_executable", SelfSetupCopiesAndRegistersTheInstalledExecutable),
+                new TestCase("installed_self_setup_refreshes_registration_without_copy", InstalledSelfSetupRefreshesRegistrationWithoutCopy),
+                new TestCase("self_setup_copy_failure_stops_before_registration", SelfSetupCopyFailureStopsBeforeRegistration),
+                new TestCase("self_setup_registration_never_claims_windows_userchoice", SelfSetupRegistrationNeverClaimsWindowsUserChoice),
+                new TestCase("self_setup_instructions_name_the_one_remaining_windows_choice", SelfSetupInstructionsNameTheOneRemainingWindowsChoice),
                 new TestCase("invalid_command_lines_do_not_remove_or_open", InvalidCommandLinesDoNotRemoveOrOpen),
                 new TestCase("program_error_formatter_reports_existing_source_zip", ProgramErrorFormatterReportsExistingSourceZip),
                 new TestCase("program_error_formatter_does_not_duplicate_source_zip_state", ProgramErrorFormatterDoesNotDuplicateSourceZipState),
@@ -692,6 +755,109 @@ namespace ZipFlow
             AssertNoPartial(destination);
         }
 
+        private static void ZeroArgumentLaunchRunsSetupWithoutArchiveSideEffects()
+        {
+            string root = NewRoot();
+            string destination = MakeDestination(root);
+            List<string> order = new List<string>();
+            RecordingRemover remover = new RecordingRemover(order);
+            RecordingLauncher launcher = new RecordingLauncher(order);
+            RecordingSetupFlow setup = new RecordingSetupFlow();
+
+            string result = Program.Run(new string[0], destination, remover, launcher, setup);
+
+            AssertEqual<string>(null, result, "setup launch has no archive result");
+            AssertEqual(1, setup.Calls, "setup flow invoked once");
+            AssertEqual(0, remover.Calls, "setup never invokes remover");
+            AssertEqual(0, launcher.Calls, "setup never invokes launcher");
+            AssertEqual(0, order.Count, "setup has no archive callbacks");
+            AssertNoPartial(destination);
+        }
+
+        private static void SelfSetupCopiesAndRegistersTheInstalledExecutable()
+        {
+            const string source = @"C:\Users\Test\Downloads\ZipFlow.exe";
+            const string localAppData = @"C:\Users\Test\AppData\Local";
+            const string installed = @"C:\Users\Test\AppData\Local\ZipFlow\ZipFlow.exe";
+            RecordingSetupBackend backend = new RecordingSetupBackend();
+
+            string result = new ZipFlowSetup(backend).Install(source, localAppData);
+
+            AssertEqual(installed, result, "installed executable path");
+            AssertEqual("Directory|" + Path.GetDirectoryName(installed), backend.Calls[0], "install directory created first");
+            AssertEqual("Copy|" + source + "|" + installed, backend.Calls[1], "running executable copied before registration");
+            AssertEqual(9, CountCallsWithPrefix(backend.Calls, "Registry|"), "registration value count");
+            AssertEqual(1, CountCallsWithPrefix(backend.Calls, "Notify"), "association notification count");
+            AssertEqual("Notify", backend.Calls[backend.Calls.Count - 1], "notification follows registration");
+
+            string expectedCommand = "\"" + installed + "\" \"%1\"";
+            AssertTrue(backend.Calls.Contains(
+                "Registry|Software\\Classes\\ZipFlow.Archive\\shell\\open\\command||" + expectedCommand + "|String"),
+                "ProgID open command targets installed executable");
+            AssertTrue(backend.Calls.Contains(
+                "Registry|Software\\Classes\\Applications\\ZipFlow.exe\\shell\\open\\command||" + expectedCommand + "|String"),
+                "application open command targets installed executable");
+        }
+
+        private static void InstalledSelfSetupRefreshesRegistrationWithoutCopy()
+        {
+            const string localAppData = @"C:\Users\Test\AppData\Local";
+            const string installed = @"C:\Users\Test\AppData\Local\ZipFlow\ZipFlow.exe";
+            RecordingSetupBackend backend = new RecordingSetupBackend();
+
+            string result = new ZipFlowSetup(backend).Install(installed, localAppData);
+
+            AssertEqual(installed, result, "installed executable remains target");
+            AssertEqual(0, CountCallsWithPrefix(backend.Calls, "Directory|"), "installed launch does not recreate directory");
+            AssertEqual(0, CountCallsWithPrefix(backend.Calls, "Copy|"), "installed launch does not copy over itself");
+            AssertEqual(9, CountCallsWithPrefix(backend.Calls, "Registry|"), "registration refreshed");
+            AssertEqual("Notify", backend.Calls[backend.Calls.Count - 1], "refresh notifies Explorer");
+        }
+
+        private static void SelfSetupCopyFailureStopsBeforeRegistration()
+        {
+            RecordingSetupBackend backend = new RecordingSetupBackend();
+            IOException marker = new IOException("simulated copy failure");
+            backend.CopyFailure = marker;
+
+            IOException exception = AssertThrows<IOException>(delegate
+            {
+                new ZipFlowSetup(backend).Install(
+                    @"C:\Users\Test\Downloads\ZipFlow.exe",
+                    @"C:\Users\Test\AppData\Local");
+            }, "copy failure should propagate");
+
+            AssertTrue(Object.ReferenceEquals(marker, exception), "copy failure preserved");
+            AssertEqual(0, CountCallsWithPrefix(backend.Calls, "Registry|"), "failed copy writes no registration");
+            AssertEqual(0, CountCallsWithPrefix(backend.Calls, "Notify"), "failed copy sends no notification");
+        }
+
+        private static void SelfSetupRegistrationNeverClaimsWindowsUserChoice()
+        {
+            RecordingSetupBackend backend = new RecordingSetupBackend();
+
+            new ZipFlowSetup(backend).Install(
+                @"C:\Users\Test\Downloads\ZipFlow.exe",
+                @"C:\Users\Test\AppData\Local");
+
+            string calls = String.Join(Environment.NewLine, backend.Calls.ToArray());
+            AssertTrue(calls.IndexOf("UserChoice", StringComparison.OrdinalIgnoreCase) < 0, "setup never writes UserChoice");
+            AssertFalse(backend.Calls.Contains("Registry|Software\\Classes\\.zip|||String"), "setup never replaces the .zip default value");
+            AssertTrue(backend.Calls.Contains(
+                "Registry|Software\\Classes\\.zip\\OpenWithProgids|ZipFlow.Archive|byte[0]|None"),
+                "setup registers only as an available .zip handler");
+        }
+
+        private static void SelfSetupInstructionsNameTheOneRemainingWindowsChoice()
+        {
+            string instructions = Program.SetupInstructions;
+
+            AssertTrue(instructions.IndexOf("installed itself for this Windows account", StringComparison.OrdinalIgnoreCase) >= 0, "setup confirms per-user installation");
+            AssertTrue(instructions.IndexOf("Choose ZipFlow for .zip once", StringComparison.OrdinalIgnoreCase) >= 0, "setup names the exact remaining choice");
+            AssertTrue(instructions.IndexOf("Windows requires you to approve", StringComparison.OrdinalIgnoreCase) >= 0, "setup explains why the choice is manual");
+            AssertTrue(instructions.IndexOf("double-click ZIP files normally", StringComparison.OrdinalIgnoreCase) >= 0, "setup states the finished behavior");
+        }
+
         private static void InvalidCommandLinesDoNotRemoveOrOpen()
         {
             string root = NewRoot();
@@ -1066,6 +1232,20 @@ namespace ZipFlow
                 count++;
                 offset = found + search.Length;
             }
+        }
+
+        private static int CountCallsWithPrefix(IList<string> calls, string prefix)
+        {
+            int count = 0;
+            foreach (string call in calls)
+            {
+                if (call.StartsWith(prefix, StringComparison.Ordinal))
+                {
+                    count++;
+                }
+            }
+
+            return count;
         }
 
         private static void TryDeleteDirectory(string path)
