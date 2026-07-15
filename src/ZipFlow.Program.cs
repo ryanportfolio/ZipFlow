@@ -29,8 +29,27 @@ namespace ZipFlow
         }
     }
 
+    internal interface IZipFlowSetupFlow
+    {
+        void Run();
+    }
+
     internal static class Program
     {
+        internal static readonly string SetupInstructions =
+            "One Windows choice remains"
+            + Environment.NewLine
+            + Environment.NewLine
+            + "ZipFlow installed itself for this Windows account."
+            + Environment.NewLine
+            + Environment.NewLine
+            + "Click OK to open Default Apps. Choose ZipFlow for .zip once."
+            + Environment.NewLine
+            + "Windows requires you to approve this choice."
+            + Environment.NewLine
+            + Environment.NewLine
+            + "After that, double-click ZIP files normally.";
+
         [STAThread]
         private static void Main(string[] args)
         {
@@ -38,7 +57,12 @@ namespace ZipFlow
             try
             {
                 string desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-                Run(args, desktop, new RecycleBinSourceRemover(), new ExplorerFolderLauncher());
+                Run(
+                    args,
+                    desktop,
+                    new RecycleBinSourceRemover(),
+                    new ExplorerFolderLauncher(),
+                    new InteractiveZipFlowSetupFlow());
             }
             catch (Exception exception)
             {
@@ -55,6 +79,27 @@ namespace ZipFlow
             string archivePath = ValidateArguments(args);
             ZipProcessor processor = new ZipProcessor(ArchivePolicy.Default, remover, launcher);
             return processor.Process(archivePath, destinationRoot);
+        }
+
+        internal static string Run(
+            string[] args,
+            string destinationRoot,
+            ISourceRemover remover,
+            IFolderLauncher launcher,
+            IZipFlowSetupFlow setupFlow)
+        {
+            if (args == null || args.Length == 0)
+            {
+                if (setupFlow == null)
+                {
+                    throw new ArgumentNullException("setupFlow");
+                }
+
+                setupFlow.Run();
+                return null;
+            }
+
+            return Run(args, destinationRoot, remover, launcher);
         }
 
         internal static string FormatError(Exception exception, string archivePath)

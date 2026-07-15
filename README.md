@@ -12,19 +12,26 @@ It runs only when you open a ZIP. No background process. No tray icon. No servic
 
 ## Get ZipFlow
 
-1. Download **ZipFlow for Windows** from the [latest release](https://github.com/ryanportfolio/ZipFlow/releases/latest).
-2. Extract the downloaded bundle.
-3. Open PowerShell in that folder and run:
+1. Download [ZipFlow.exe](https://github.com/ryanportfolio/ZipFlow/releases/latest/download/ZipFlow.exe).
+2. Double-click it once.
+3. Read the short setup message and click **OK**.
+4. Windows Default Apps opens. Choose **ZipFlow** for `.zip`.
 
-   ```powershell
-   .\Install.ps1
-   ```
+That Windows choice happens once. Afterward, double-click ZIP files normally.
 
-4. Windows Default Apps opens. Find `.zip` and choose **ZipFlow**.
+Prefer portable mode? Drag a ZIP onto the downloaded `ZipFlow.exe` instead of opening the EXE by itself. ZipFlow processes that archive without installing itself.
 
-That Windows choice happens once. Afterward, double-click any `.zip` file.
+## What setup changes
 
-Prefer portable mode? Drag a ZIP onto `ZipFlow.exe`. Nothing gets installed.
+Opening `ZipFlow.exe` by itself performs the setup work automatically:
+
+- Copies the executable to `%LOCALAPPDATA%\ZipFlow\ZipFlow.exe`
+- Registers ZipFlow as an available `.zip` app for your Windows account
+- Opens the most specific Default Apps page Windows supports
+
+Setup uses no administrator access, service, startup task, tray icon, or background process. It does not replace Windows' protected default-app choice. [Windows requires that one approval to happen in its own interface](https://learn.microsoft.com/en-us/windows/apps/develop/windows-integration/default-apps-platform#security-considerations-for-the-app-defaults-platform).
+
+The release bundle still includes `Install.ps1` for scripted setup and `Uninstall.ps1` for removal. Normal setup does not require PowerShell.
 
 ## What one double-click does
 
@@ -90,7 +97,7 @@ The final source move uses the Windows Recycle Bin API. A narrow path race remai
 
 ## Uninstall
 
-First restore `.zip` to File Explorer or another archive app in Windows Default Apps. Then run:
+Download and extract the **Windows bundle** from the [latest release](https://github.com/ryanportfolio/ZipFlow/releases/latest). First restore `.zip` to File Explorer or another archive app in Windows Default Apps. Then run:
 
 ```powershell
 .\Uninstall.ps1

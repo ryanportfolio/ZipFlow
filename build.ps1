@@ -32,9 +32,10 @@ $references = @(
 
 $coreSource = Join-Path $root 'src\ZipFlow.Core.cs'
 $programSource = Join-Path $root 'src\ZipFlow.Program.cs'
+$setupSource = Join-Path $root 'src\ZipFlow.Setup.cs'
 $testSource = Join-Path $root 'tests\ZipFlow.Tests.cs'
 $testExe = Join-Path $artifacts 'ZipFlow.Tests.exe'
-$testSources = @($coreSource, $testSource)
+$testSources = @($coreSource, $setupSource, $testSource)
 if (Test-Path -LiteralPath $programSource) {
     $testSources += $programSource
 }
@@ -74,7 +75,7 @@ $appArguments = @(
     '/warn:4',
     '/warnaserror+',
     ('/out:' + $appExe)
-) + $references + @($coreSource, $programSource)
+) + $references + @($coreSource, $setupSource, $programSource)
 
 & $csc $appArguments
 if ($LASTEXITCODE -ne 0) {
